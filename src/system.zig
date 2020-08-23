@@ -2,6 +2,8 @@ const std = @import("std");
 
 const c = @import("c.zig");
 
+const InputBuffer = @import("module.zig").InputBuffer;
+
 const InitError = error{CouldntInitPortAudio};
 
 pub fn init() !void {
@@ -18,6 +20,8 @@ pub fn deinit() !void {
     }
 }
 
+var sine = @import("modules/sine.zig").Sine.init(0.5, 660.0);
+
 pub fn callback(
     input: ?*const c_void,
     output: ?*c_void,
@@ -27,15 +31,25 @@ pub fn callback(
     user_data: ?*c_void,
 ) callconv(.C) c_int {
     var out_ptr = @ptrCast([*]f32, @alignCast(4, output));
-    var out_slice = out_ptr[0..frame_ct];
+    var out_slice = out_ptr[0 .. frame_ct * 2];
 
-    for (out_slice) |*blah| {
-        blah.* = 0.;
-    }
+    const ctx = CallbackContext{
+        .sample_rate = 44100,
+    };
 
-    std.debug.warn("hi {}\n", .{frame_ct});
+    sine.module.compute(&sine.module, &ctx, &[0]InputBuffer{}, out_slice);
+
+    // for (out_slice) |*blah| {
+    //     blah.* = 0.;
+    // }
+
+    // std.debug.warn("hi {}\n", .{frame_ct});
     return 0;
 }
+
+pub const CallbackContext = struct {
+    sample_rate: u32,
+};
 
 const Graph = @import("graph.zig").Graph;
 
@@ -53,9 +67,8 @@ pub const System = struct {
             .channelCount = 2,
             .device = 5,
             .hostApiSpecificStreamInfo = null,
-            // .sampleFormat = c.paFloat32,
-            .sampleFormat = 1,
-            .suggestedLatency = 0.25,
+            .sampleFormat = c.paFloat32,
+            .suggestedLatency = 0.5,
         };
         const err = c.Pa_OpenStream(
             &stream,
@@ -63,12 +76,11 @@ pub const System = struct {
             &output_params,
             44100.0,
             c.paFramesPerBufferUnspecified,
-            // c.paNoFlag,
-            0,
+            c.paNoFlag,
             callback,
             null,
         );
-        // _ = c.Pa_StartStream(stream);
+        _ = c.Pa_StartStream(stream);
 
         var graph = AudioGraph.init(allocator);
 
