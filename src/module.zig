@@ -1,18 +1,103 @@
-const CallbackContext = @import("system.zig").CallbackContext;
+const std = @import("std");
 
-pub const InputBuffer = struct {
-    idx: usize,
-    buffer: []const f32,
-};
+const audio_graph = @import("audio_graph.zig");
+const system = @import("system.zig");
+const interface = @import("interface.zig");
+
+const InBuffer = audio_graph.InBuffer;
+const OutBuffer = audio_graph.OutBuffer;
+const CallbackContext = system.CallbackContext;
 
 pub const Module = struct {
-    frame: fn (*Module, *const CallbackContext) void = frame,
-    compute: fn (
-        *Module,
-        *const CallbackContext,
-        []const InputBuffer,
-        []f32,
-    ) void,
+    const Self = @This();
 
-    fn frame(_module: *Module, _ctx: *const CallbackContext) void {}
+    const Interface = struct {
+        pub const Impl = @Type(.Opaque);
+
+        frame: ?fn (*Impl, CallbackContext) void,
+        compute: fn (
+            *Impl,
+            CallbackContext,
+            []const InBuffer,
+            *OutBuffer,
+        ) void,
+
+        pub fn frame(_module: *Impl, _ctx: CallbackContext) void {
+            std.log.warn("default frame\n", .{});
+        }
+    };
+
+    interface: *const Interface,
+    impl: *Interface.Impl,
+
+    pub fn init(module: anytype) Self {
+        // TODO module must be a pointer
+        return .{
+            .interface = comptime interface.populate(Interface, @TypeOf(module).Child),
+            .impl = @ptrCast(*Interface.Impl, module),
+        };
+    }
+
+    pub fn frame(self: *Self, ctx: CallbackContext) void {
+        self.interface.frame.?(self.impl, ctx);
+    }
+
+    pub fn compute(
+        self: *Self,
+        ctx: CallbackContext,
+        in_buffers: []const InBuffer,
+        out_buffer: *OutBuffer,
+    ) void {
+        self.interface.compute(self.impl, ctx, in_buffers, out_buffer);
+    }
 };
+
+const One = struct {
+    x: u8,
+
+    pub fn frame(self: *One, ctx: CallbackContext) void {
+        std.log.warn("one frame\n", .{});
+    }
+
+    pub fn compute(
+        self: *One,
+        ctx: CallbackContext,
+        in_buffers: []const InBuffer,
+        out_buffer: *OutBuffer,
+    ) void {
+        std.log.warn("one compute\n", .{});
+    }
+};
+
+const Two = struct {
+    x: u8,
+
+    pub fn compute(
+        self: *Two,
+        ctx: CallbackContext,
+        in_buffers: []const InBuffer,
+        out_buffer: *OutBuffer,
+    ) void {
+        std.log.warn("two compute\n", .{});
+    }
+};
+
+test "module, no defaults" {
+    var ctx: CallbackContext = undefined;
+    var out_buffer: OutBuffer = undefined;
+
+    var one = One{ .x = 255 };
+    var mod = Module.init(&one);
+    mod.frame(ctx);
+    mod.compute(ctx, &[_]InBuffer{}, &out_buffer);
+}
+
+test "module, default" {
+    var ctx: CallbackContext = undefined;
+    var out_buffer: OutBuffer = undefined;
+
+    var two = Two{ .x = 255 };
+    var mod = Module.init(&two);
+    mod.frame(ctx);
+    mod.compute(ctx, &[_]InBuffer{}, &out_buffer);
+}
