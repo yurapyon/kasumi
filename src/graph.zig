@@ -16,14 +16,14 @@ const Direction = enum(usize) {
     }
 };
 
-const SortError = error{CycleFound};
+pub const SortError = error{CycleFound};
 
 /// data can be accessed by going like graph.nodes.items[some_idx]
 pub fn Graph(comptime N: type, comptime E: type) type {
     return struct {
         const Self = @This();
 
-        const Node = struct {
+        pub const Node = struct {
             weight: N,
 
             next: ?NodeIndex,
@@ -32,7 +32,7 @@ pub fn Graph(comptime N: type, comptime E: type) type {
             edges: [2]?EdgeIndex,
         };
 
-        const Edge = struct {
+        pub const Edge = struct {
             weight: E,
 
             start_node: NodeIndex,
@@ -42,12 +42,12 @@ pub fn Graph(comptime N: type, comptime E: type) type {
             in_use: bool,
         };
 
-        const EdgeReference = struct {
+        pub const EdgeReference = struct {
             idx: EdgeIndex,
             edge: *Edge,
         };
 
-        const EdgeIterator = struct {
+        pub const EdgeIterator = struct {
             graph: *const Self,
             curr_idx: ?EdgeIndex,
             direction: Direction,
@@ -248,11 +248,9 @@ pub fn Graph(comptime N: type, comptime E: type) type {
 
             var check_idx: usize = 0;
             while (check_idx < node_ct) : (check_idx += 1) {
-                if (!self.nodes.items[check_idx].in_use) {
-                    continue;
-                }
-
-                if (visited[check_idx]) {
+                if (!self.nodes.items[check_idx].in_use or
+                    visited[check_idx])
+                {
                     continue;
                 }
 

@@ -1,63 +1,42 @@
 const std = @import("std");
 
-const CallbackContext = @import("../system.zig").CallbackContext;
-usingnamespace @import("../module.zig");
+const audio_graph = @import("../audio_graph.zig");
+const system = @import("../system.zig");
 
-const PI = 3.1415927;
+const InBuffer = audio_graph.InBuffer;
+const Sample = audio_graph.Sample;
+const CallbackContext = system.CallbackContext;
 
 pub const Sine = struct {
     const Self = @This();
-
-    module: Module = .{
-        .compute = compute,
-    },
-
     frame_ct: u32,
-    move_ct: u32,
-
-    move_freq: f32,
     freq: f32,
 
-    pub fn init(move_freq: f32, freq: f32) Self {
-        return Self{
+    pub fn init(freq: f32) Self {
+        return .{
             .frame_ct = 0,
-            .move_ct = 0,
-            .move_freq = move_freq,
             .freq = freq,
         };
     }
 
-    fn compute(
-        module: *Module,
-        ctx: *const CallbackContext,
-        _inputs: []const InputBuffer,
-        output: []f32,
+    pub fn compute(
+        self: *Self,
+        ctx: CallbackContext,
+        _inputs: []const InBuffer,
+        output: []Sample,
     ) void {
-        var self = @fieldParentPtr(Self, "module", module);
-
         const srate_f = @intToFloat(f32, ctx.sample_rate);
-        const period_base = PI * 2. / srate_f;
+        const period_base = std.math.tau / srate_f;
 
         var ct: usize = 0;
-        while (ct < output.len) : (ct += 2) {
-            const move_f = @intToFloat(f32, self.move_ct);
-            const move_amt = std.math.sin(move_f * self.move_freq * period_base);
-
+        while (ct < ctx.frame_len) : (ct += 2) {
             const frame_f = @intToFloat(f32, self.frame_ct);
-            const period = frame_f * (self.freq + move_amt * 100.) * period_base;
+            const period = frame_f * self.freq * period_base;
 
             const s = std.math.sin(period) * 0.5;
             output[ct] = s;
             output[ct + 1] = s;
             self.frame_ct += 1;
-            if (self.frame_ct > ctx.sample_rate) {
-                std.log.info("{}", .{std.math.sin(period)});
-                self.frame_ct = 0;
-            }
-            self.move_ct += 1;
-            if (self.move_ct > ctx.sample_rate) {
-                self.move_ct = 0;
-            }
         }
     }
 };

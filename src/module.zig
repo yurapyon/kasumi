@@ -2,10 +2,10 @@ const std = @import("std");
 
 const audio_graph = @import("audio_graph.zig");
 const system = @import("system.zig");
-const interface = @import("interface.zig");
+const interface = @import("util.zig").interface;
 
 const InBuffer = audio_graph.InBuffer;
-const OutBuffer = audio_graph.OutBuffer;
+const Sample = audio_graph.Sample;
 const CallbackContext = system.CallbackContext;
 
 pub const Module = struct {
@@ -19,12 +19,10 @@ pub const Module = struct {
             *Impl,
             CallbackContext,
             []const InBuffer,
-            *OutBuffer,
+            []Sample,
         ) void,
 
-        pub fn frame(_module: *Impl, _ctx: CallbackContext) void {
-            std.log.warn("default frame\n", .{});
-        }
+        pub fn frame(_module: *Impl, _ctx: CallbackContext) void {}
     };
 
     interface: *const Interface,
@@ -46,11 +44,13 @@ pub const Module = struct {
         self: *Self,
         ctx: CallbackContext,
         in_buffers: []const InBuffer,
-        out_buffer: *OutBuffer,
+        out_buffer: []Sample,
     ) void {
         self.interface.compute(self.impl, ctx, in_buffers, out_buffer);
     }
 };
+
+// tests ===
 
 const One = struct {
     x: u8,

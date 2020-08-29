@@ -1,26 +1,27 @@
 const std = @import("std");
 
+const audio_graph = @import("audio_graph.zig");
 const c = @import("c.zig");
+const module = @import("module.zig");
+const util = @import("util.zig");
 
-const InputBuffer = @import("module.zig").InputBuffer;
+const AudioGraph = audio_graph.AudioGraph;
+const InBuffer = audio_graph.InBuffer;
+const OutBuffer = audio_graph.OutBuffer;
+const Sample = audio_graph.Sample;
 
-const InitError = error{CouldntInitPortAudio};
+const Module = module.Module;
 
-pub fn init() !void {
-    const err = c.Pa_Initialize();
-    if (err != c.paNoError) {
-        return error.CouldntInitPortAudio;
-    }
-}
+const ChunkIterator = util.ChunkIterator;
 
-pub fn deinit() !void {
-    const err = c.Pa_Terminate();
-    if (err != c.paNoError) {
-        return error.CouldntInitPortAudio;
-    }
-}
+//;
 
-var sine = @import("modules/sine.zig").Sine.init(0.5, 660.0);
+pub const CallbackContext = struct {
+    sample_rate: u32,
+    frame_len: usize,
+};
+
+//;
 
 pub fn callback(
     input: ?*const c_void,
@@ -28,40 +29,40 @@ pub fn callback(
     frame_ct: c_ulong,
     time_info: [*c]const c.PaStreamCallbackTimeInfo,
     status_flags: c.PaStreamCallbackFlags,
-    user_data: ?*c_void,
+    userdata: ?*c_void,
 ) callconv(.C) c_int {
     var out_ptr = @ptrCast([*]f32, @alignCast(4, output));
     var out_slice = out_ptr[0 .. frame_ct * 2];
 
-    const ctx = CallbackContext{
+    var graph = @ptrCast(*AudioGraph, @alignCast(@alignOf(*AudioGraph), userdata));
+
+    var ctx = CallbackContext{
         .sample_rate = 44100,
+        .frame_len = out_slice.len,
     };
 
-    sine.module.compute(&sine.module, &ctx, &[0]InputBuffer{}, out_slice);
+    graph.frame(ctx);
 
-    // for (out_slice) |*blah| {
-    //     blah.* = 0.;
-    // }
+    var chunks = ChunkIterator(Sample).init(&out_slice, audio_graph.max_callback_len);
+    while (chunks.next()) |chunk| {
+        ctx.frame_len = chunk.len;
+        graph.compute(ctx, chunk);
+    }
 
-    // std.debug.warn("hi {}\n", .{frame_ct});
     return 0;
 }
 
-pub const CallbackContext = struct {
-    sample_rate: u32,
-};
-
-const Graph = @import("graph.zig").Graph;
-
-const AudioGraph = Graph(usize, usize);
-
-pub const System = struct {
+pub const Context = struct {
     const Self = @This();
 
     stream: *c.PaStream,
-    graph: AudioGraph,
 
-    pub fn init(allocator: *std.mem.Allocator) !Self {
+    pub fn init(graph: *AudioGraph) !Self {
+        const err = c.Pa_Initialize();
+        if (err != c.paNoError) {
+            return error.CouldntInitPortAudio;
+        }
+
         var stream: ?*c.PaStream = null;
         var output_params = c.PaStreamParameters{
             .channelCount = 2,
@@ -78,33 +79,16 @@ pub const System = struct {
             c.paFramesPerBufferUnspecified,
             c.paNoFlag,
             callback,
-            null,
+            graph,
         );
         _ = c.Pa_StartStream(stream);
 
-        var graph = AudioGraph.init(allocator);
-
-        const n1 = try graph.add_node(0);
-        const n2 = try graph.add_node(1);
-        const n3 = try graph.add_node(2);
-
-        const e1 = try graph.add_edge(n1, n2, 1);
-        const e2 = try graph.add_edge(n2, n3, 2);
-        const e3 = try graph.add_edge(n1, n3, 3);
-
-        std.log.info("{} {}", .{
-            graph.edges.items.len,
-            graph.nodes.items.len,
-        });
-
-        var iter = graph.edges_directed(n1, true);
-        while (iter.next()) |edge_idx| {
-            std.log.info("edge_idx {}", .{edge_idx});
-        }
-
         return Self{
             .stream = stream.?,
-            .graph = graph,
         };
+    }
+
+    pub fn deinit() void {
+        c.Pa_Terminate();
     }
 };
