@@ -1,4 +1,5 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 
 const NodeIndex = usize;
@@ -15,6 +16,8 @@ const Direction = enum(usize) {
     }
 };
 
+const SortError = error{CycleFound};
+
 /// data can be accessed by going like graph.nodes.items[some_idx]
 pub fn Graph(comptime N: type, comptime E: type) type {
     return struct {
@@ -24,6 +27,7 @@ pub fn Graph(comptime N: type, comptime E: type) type {
             weight: N,
 
             next: ?NodeIndex,
+            in_use: bool,
 
             edges: [2]?EdgeIndex,
         };
@@ -35,6 +39,7 @@ pub fn Graph(comptime N: type, comptime E: type) type {
             end_node: NodeIndex,
 
             next: [2]?EdgeIndex,
+            in_use: bool,
         };
 
         const EdgeReference = struct {
@@ -93,7 +98,7 @@ pub fn Graph(comptime N: type, comptime E: type) type {
                 } else {
                     var find_idx: ?usize = head_idx;
                     while (find_idx) |find_idx_| {
-                        var find_edge = self.edges.items[_find_idx_];
+                        var find_edge = self.edges.items[find_idx_];
 
                         if (find_edge.next[dir] == edge_idx) {
                             find_edge.next = edge.next;
@@ -117,9 +122,10 @@ pub fn Graph(comptime N: type, comptime E: type) type {
                 break :blk idx;
             };
 
-            self.nodes.items[idx] = Node{
+            self.nodes.items[idx] = .{
                 .weight = weight,
                 .next = null,
+                .in_use = true,
                 .edges = .{ null, null },
             };
 
@@ -141,7 +147,9 @@ pub fn Graph(comptime N: type, comptime E: type) type {
                 }
             }
 
-            self.nodes.items[idx].next = self.next_node;
+            var dead_node = &self.nodes.items[idx];
+            dead_node.in_use = false;
+            dead_node.next = self.next_node;
             self.next_node = idx;
         }
 
@@ -164,7 +172,7 @@ pub fn Graph(comptime N: type, comptime E: type) type {
                 break :blk idx;
             };
 
-            self.edges.items[idx] = Edge{
+            self.edges.items[idx] = .{
                 .weight = weight,
                 .start_node = start_idx,
                 .end_node = end_idx,
@@ -172,6 +180,7 @@ pub fn Graph(comptime N: type, comptime E: type) type {
                     node_start.edges[@enumToInt(Direction.Outgoing)],
                     node_end.edges[@enumToInt(Direction.Incoming)],
                 },
+                .in_use = true,
             };
 
             node_start.edges[@enumToInt(Direction.Outgoing)] = idx;
@@ -181,14 +190,15 @@ pub fn Graph(comptime N: type, comptime E: type) type {
         }
 
         pub fn removeEdge(self: *Self, idx: EdgeIndex) void {
-            var edge = &self.edges.items[idx];
+            var dead_edge = &self.edges.items[idx];
 
-            self.removeEdgeFromNode(edge.start_node, idx, .Outgoing);
-            self.removeEdgeFromNode(edge.start_node, idx, .Incoming);
-            self.removeEdgeFromNode(edge.end_node, idx, .Outgoing);
-            self.removeEdgeFromNode(edge.end_node, idx, .Incoming);
+            self.removeEdgeFromNode(dead_edge.start_node, idx, .Outgoing);
+            self.removeEdgeFromNode(dead_edge.start_node, idx, .Incoming);
+            self.removeEdgeFromNode(dead_edge.end_node, idx, .Outgoing);
+            self.removeEdgeFromNode(dead_edge.end_node, idx, .Incoming);
 
-            edge.next[0] = self.next_edge;
+            dead_edge.next[0] = self.next_edge;
+            dead_edge.in_use = false;
             self.next_edge = idx;
         }
 
@@ -205,8 +215,85 @@ pub fn Graph(comptime N: type, comptime E: type) type {
                 .direction = direction,
             };
         }
+
+        pub fn toposort(
+            self: Self,
+            allocator: *Allocator,
+            workspace_allocator: *Allocator,
+        ) ![]NodeIndex {
+            if (self.nodes.items.len == 0) {
+                return try allocator.alloc(NodeIndex, 0);
+            }
+
+            const node_ct = self.nodes.items.len;
+
+            var ret: ArrayList(NodeIndex) = ArrayList(NodeIndex).init(allocator);
+            errdefer ret.deinit();
+
+            var marked = try workspace_allocator.alloc(bool, node_ct);
+            defer workspace_allocator.free(marked);
+            var visited = try workspace_allocator.alloc(bool, node_ct);
+            defer workspace_allocator.free(visited);
+
+            {
+                var i: usize = 0;
+                while (i < node_ct) : (i += 1) {
+                    marked[i] = false;
+                    visited[i] = false;
+                }
+            }
+
+            var stack = try ArrayList(NodeIndex).initCapacity(workspace_allocator, node_ct);
+            defer stack.deinit();
+
+            var check_idx: usize = 0;
+            while (check_idx < node_ct) : (check_idx += 1) {
+                if (!self.nodes.items[check_idx].in_use) {
+                    continue;
+                }
+
+                if (visited[check_idx]) {
+                    continue;
+                }
+
+                try stack.append(check_idx);
+                while (stack.items.len > 0) {
+                    const idx = stack.items[stack.items.len - 1];
+                    marked[idx] = true;
+
+                    const node = self.nodes.items[idx];
+                    var children_to_check = false;
+                    if (node.edges[@enumToInt(Direction.Outgoing)]) |_| {
+                        var edge_iter = self.edgesDirected(idx, .Outgoing);
+                        while (edge_iter.next()) |ref| {
+                            const child_idx = ref.edge.end_node;
+                            if (marked[child_idx]) {
+                                if (!visited[child_idx]) {
+                                    return error.CycleDetected;
+                                }
+                            } else {
+                                try stack.append(ref.edge.end_node);
+                                children_to_check = true;
+                            }
+                        }
+                    }
+
+                    if (!children_to_check) {
+                        _ = stack.pop();
+                        try ret.append(idx);
+                        visited[idx] = true;
+                    }
+                }
+            }
+
+            std.mem.reverse(NodeIndex, ret.items);
+
+            return ret.toOwnedSlice();
+        }
     };
 }
+
+// TODO write tests
 
 const testing = std.testing;
 const expect = testing.expect;
@@ -223,16 +310,23 @@ test "graph" {
     const d = try g.addNode('d');
     const e = try g.addNode('e');
 
-    const e1 = try g.addEdge(a, b, 1);
-    const e2 = try g.addEdge(b, c, 2);
-    const e3 = try g.addEdge(a, d, 3);
-    const e4 = try g.addEdge(c, d, 4);
-    const e5 = try g.addEdge(d, e, 5);
+    const e1 = try g.addEdge(b, a, 1);
+    const e2 = try g.addEdge(a, d, 2);
+    const e3 = try g.addEdge(c, e, 3);
+    const e4 = try g.addEdge(d, e, 4);
+    // const e5 = try g.addEdge(e, a, 5);
 
-    g.removeEdge(e4);
+    // g.removeEdge(e4);
 
     var edges = g.edgesDirected(a, .Outgoing);
     while (edges.next()) |ref| {
         std.log.warn("\n{}\n", .{ref.edge});
+    }
+
+    const sort = try g.toposort(alloc, alloc);
+    defer alloc.free(sort);
+    for (sort) |idx| {
+        const node = g.nodes.items[idx];
+        std.log.warn("{c}\n", .{node.weight});
     }
 }
