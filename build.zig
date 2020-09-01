@@ -12,6 +12,7 @@ pub fn build(b: *Builder) void {
     exe.addIncludeDir("/usr/include");
     exe.linkSystemLibrary("c");
     exe.linkSystemLibrary("portaudio");
+    exe.addPackagePath("nitori", "lib/nitori/src/main.zig");
 
     exe.install();
 

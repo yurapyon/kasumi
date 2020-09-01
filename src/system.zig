@@ -1,18 +1,18 @@
 const std = @import("std");
 
-const audio_graph = @import("audio_graph.zig");
-const c = @import("c.zig");
-const module = @import("module.zig");
-const util = @import("util.zig");
+const nitori = @import("nitori");
+const ChunkIterator = util.ChunkIterator;
 
+const audio_graph = @import("audio_graph.zig");
 const AudioGraph = audio_graph.AudioGraph;
 const InBuffer = audio_graph.InBuffer;
 const OutBuffer = audio_graph.OutBuffer;
 const Sample = audio_graph.Sample;
 
-const Module = module.Module;
+const c = @import("c.zig");
 
-const ChunkIterator = util.ChunkIterator;
+const module = @import("module.zig");
+const Module = module.Module;
 
 //;
 

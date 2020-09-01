@@ -2,18 +2,17 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 
-const communication = @import("communication.zig");
-const graph = @import("graph.zig");
-const module = @import("module.zig");
-const system = @import("system.zig");
-
+const nitori = @import("nitori");
+const communication = nitori.communication;
+const graph = nitori.graph;
 const Channel = communication.Channel;
 const EventChannel = communication.EventChannel;
-
 const Graph = graph.Graph;
 
+const module = @import("module.zig");
 const Module = module.Module;
 
+const system = @import("system.zig");
 const CallbackContext = system.CallbackContext;
 
 //;
@@ -38,6 +37,19 @@ const AudioGraphBase = struct {
     graph: Graph(usize, usize),
     sort: []graph.NodeIndex,
     output: ?NodeIndex,
+
+    pub fn init(allocator: *Allocator) Self {
+        const graph = Graph(usize, usize).init(allocator);
+        return .{
+            .graph = graph,
+            .sort = graph.toposort() catch unreachable,
+            .output = null,
+        };
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.graph.deinit();
+    }
 };
 
 // Audio-thread side audio graph
@@ -85,7 +97,22 @@ pub const AudioGraph = struct {
     }
 };
 
+// do all allocations in main thread
+//   swap out
+// but you cant count on modules being copyable ? or something
+// idk how to do this now
+
+// the rust version you had to move everything around so modules wouldnt be Clone
+//   and you had to have a separate outbuf and modules vec becuase of borrowing rules
+
+// zig doesnt care, you could even put the outbufs in the modules themselves
+
 pub const Swap = struct {
+    base: AudioGraphBase,
+
+    new_modules: ArrayList(Module),
+    new_out_bufs: ArrayList(OutBuffer),
+
     //;
 };
 
@@ -95,6 +122,19 @@ pub const ControlledAudioGraph = struct {
     graph: AudioGraph,
     tx: Channel.Sender(Swap),
     rx: EventChannel.Receiver(Swap),
+
+    // takes ownership of graph
+    pub fn init(
+        graph: AudioGraph,
+        channel: *Channel,
+        event_channel: *EventChannel,
+    ) Self {
+        return .{
+            .graph = graph,
+            .tx = channel.makeSender(),
+            .rx = event_channel.makeReceiver(),
+        };
+    }
 };
 
 pub const AudioGraphController = struct {
@@ -104,7 +144,11 @@ pub const AudioGraphController = struct {
     tx: EventChannel.Sender(Swap),
     rx: Channel.Receiver(Swap),
 
-    pub fn init(allocator: *Allocator) Self {
+    pub fn init(
+        base: AudioGraphBase,
+        channel: *Channel,
+        event_channel: EventChannel,
+    ) Self {
         //;
     }
 
