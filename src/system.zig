@@ -19,6 +19,7 @@ const Module = module.Module;
 pub const CallbackContext = struct {
     sample_rate: u32,
     frame_len: usize,
+    now: u64,
 };
 
 //;
