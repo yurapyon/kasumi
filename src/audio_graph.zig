@@ -8,10 +8,10 @@ const communication = nitori.communication;
 const Channel = communication.Channel;
 const EventChannel = communication.EventChannel;
 
-const graph = nitori.graph;
-const Graph = graph.Graph;
-const NodeIndex = graph.NodeIndex;
-const EdgeIndex = graph.EdgeIndex;
+const ng = nitori.graph;
+const Graph = ng.Graph;
+const NodeIndex = ng.NodeIndex;
+const EdgeIndex = ng.EdgeIndex;
 
 //;
 
@@ -29,6 +29,7 @@ pub const Sample = f32;
 
 pub const GraphModule = struct {
     module: Module,
+    // TODO change this to a ptr
     buffer: [max_callback_len]Sample,
 };
 
@@ -44,6 +45,7 @@ fn cloneArrayList(comptime T: type, allocator: *Allocator, alist: ArrayList(T)) 
     var ret = try ArrayList(T).initCapacity(allocator, alist.capacity);
     ret.items.len = alist.items.len;
     for (alist.items) |item, i| ret.items[i] = item;
+    return ret;
 }
 
 //;
@@ -52,12 +54,14 @@ fn cloneArrayList(comptime T: type, allocator: *Allocator, alist: ArrayList(T)) 
 //   audio thread is the only one modifying and accessing the ptrs
 //     after theyve been allocated on main thread, then swapped atomically
 //     freed by main thread
-const AudioGraphBase = struct {
+pub const AudioGraphBase = struct {
+    const Self = @This();
+
     allocator: *Allocator,
 
-    modules: ArrayList(*GraphModule),
+    modules: ArrayList(GraphModule),
     graph: Graph(usize, usize),
-    sort: []NodeIndex,
+    sorted: []NodeIndex,
     output: ?NodeIndex,
 
     temp_in_bufs: ArrayList(InBuffer),
@@ -67,9 +71,9 @@ const AudioGraphBase = struct {
         const graph = Graph(usize, usize).init(allocator);
         return .{
             .allocator = allocator,
-            .modules = ArrayList(*GraphModule).init(allocator),
+            .modules = ArrayList(GraphModule).init(allocator),
             .graph = graph,
-            .sort = graph.toposort(allocator, allocator) catch unreachable,
+            .sorted = graph.toposort(allocator, allocator) catch unreachable,
             .output = null,
             .temp_in_bufs = ArrayList(InBuffer).init(allocator),
             .removals = ArrayList(usize).init(allocator),
@@ -79,7 +83,7 @@ const AudioGraphBase = struct {
     fn deinit(self: *Self) void {
         self.removals.deinit();
         self.temp_in_bufs.deinit();
-        self.allocator.free(self.sort);
+        self.allocator.free(self.sorted);
         self.modules.deinit();
         self.graph.deinit();
     }
@@ -87,19 +91,20 @@ const AudioGraphBase = struct {
     //!
 
     fn sort(self: *Self, workspace_allocator: *Allocator) !void {
-        self.sort = try self.graph.toposort(self.allocator, workspace_allocator);
+        self.sorted = try self.graph.toposort(self.allocator, workspace_allocator);
     }
 
     // clones using allocator sent on init
     fn clone(self: Self) !Self {
         var ret: Self = undefined;
         ret.allocator = self.allocator;
-        ret.modules = try cloneArrayList(*GraphModule, self.allocator, self.modules);
+        ret.modules = try cloneArrayList(GraphModule, self.allocator, self.modules);
         ret.graph = try self.graph.clone(self.allocator);
-        ret.sort = try self.allocator.dupe(NodeIndex, self.sort);
+        ret.sorted = try self.allocator.dupe(NodeIndex, self.sorted);
         ret.output = self.output;
         ret.temp_in_bufs = try cloneArrayList(InBuffer, self.allocator, self.temp_in_bufs);
         ret.removals = try cloneArrayList(usize, self.allocator, self.removals);
+        return ret;
     }
 };
 
@@ -110,14 +115,14 @@ pub const AudioGraph = struct {
 
     base: AudioGraphBase,
 
-    tx: Channel.Sender(AudioGraphBase),
-    rx: EventChannel.Receiver(AudioGraphBase),
+    tx: Channel(AudioGraphBase).Sender,
+    rx: EventChannel(AudioGraphBase).Receiver,
 
     // allocator must be the same as used for the controller
     pub fn init(
         allocator: *Allocator,
-        channel: *Channel,
-        event_channel: *EventChannel,
+        channel: *Channel(AudioGraphBase),
+        event_channel: *EventChannel(AudioGraphBase),
     ) Self {
         return .{
             .base = AudioGraphBase.init(allocator),
@@ -138,40 +143,48 @@ pub const AudioGraph = struct {
     }
 
     pub fn frame(self: *Self, ctx: CallbackContext) void {
-        if (self.rx.tryRecv(ctx.now)) |*swap| {
-            std.mem.swap(AudioGraphBase, &self.base, swap);
-            std.mem.swap(AudioGraphBase, &self.base.removals, &swap.removals);
-            self.tx.send(swap.*);
+        if (self.rx.tryRecv(ctx.now)) |*swap_ev| {
+            std.mem.swap(AudioGraphBase, &self.base, &swap_ev.data);
+            std.mem.swap(ArrayList(usize), &self.base.removals, &swap_ev.data.removals);
+            // TODO theres an error here for if channel is full
+            self.tx.send(swap_ev.data) catch unreachable;
         }
 
-        for (self.base.sort) |idx| {
+        for (self.base.sorted) |idx| {
             const module_idx = self.moduleIdxFromNodeIdx(idx);
-            self.modules[module_idx].frame(ctx);
+            self.base.modules.items[module_idx].module.frame(ctx);
         }
     }
 
+    // TODO handle buffer max len more robustly
+    //   as is, out arg can be any size
     pub fn compute(self: *Self, ctx: CallbackContext, out: []Sample) void {
         if (self.base.output) |output_idx| {
-            for (self.base.sort) |idx| {
+            for (self.base.sorted) |idx| {
                 const module_idx = self.moduleIdxFromNodeIdx(idx);
 
                 var in_bufs_at: usize = 0;
                 var edge_iter = self.base.graph.edgesDirected(idx, .Incoming);
                 while (edge_iter.next()) |ref| {
                     const in_buf_idx = self.moduleIdxFromNodeIdx(ref.edge.start_node);
-                    self.base.temp_in_bufs[in_bufs_at] = .{
+                    self.base.temp_in_bufs.items[in_bufs_at] = .{
                         .id = ref.edge.weight,
-                        .buf = self.out_bufs[in_buf_idx],
+                        .buf = &self.base.modules.items[in_buf_idx].buffer,
                     };
                     in_bufs_at += 1;
                 }
 
-                var out_buf = &self.out_bufs[module_idx];
-                self.modules[module_idx].compute(ctx, self.base.temp_in_bufs[0..in_bufs_at], out_buf);
-                std.mem.copy(Sample, out_buf, self.out_bufs[output_idx].buffer[0..ctx.frame_len]);
+                var out_buf = &self.base.modules.items[module_idx].buffer;
+                self.base.modules.items[module_idx].module.compute(
+                    ctx,
+                    self.base.temp_in_bufs.items[0..in_bufs_at],
+                    out_buf,
+                );
             }
+
+            std.mem.copy(Sample, out, self.base.modules.items[output_idx].buffer[0..ctx.frame_len]);
         } else {
-            std.mem.set(Sample, out_buf, 0.);
+            std.mem.set(Sample, out, 0.);
         }
     }
 };
@@ -187,13 +200,13 @@ pub const Controller = struct {
     base: AudioGraphBase,
     max_inputs: usize,
 
-    tx: EventChannel.Sender(AudioGraphBase),
-    rx: Channel.Receiver(AudioGraphBase),
+    tx: EventChannel(AudioGraphBase).Sender,
+    rx: Channel(AudioGraphBase).Receiver,
 
     pub fn init(
         allocator: *Allocator,
-        channel: *Channel,
-        event_channel: EventChannel,
+        channel: *Channel(AudioGraphBase),
+        event_channel: *EventChannel(AudioGraphBase),
     ) Self {
         return .{
             .allocator = allocator,
@@ -226,11 +239,11 @@ pub const Controller = struct {
 
     // takes ownership of module
     // TODO handle not found errors? maybe not
-    pub fn addModule(self: *Self, module: *Module) !NodeIndex {
+    pub fn addModule(self: *Self, mod: Module) !NodeIndex {
         const id = self.base.modules.items.len;
         try self.base.modules.append(.{
-            .module = module,
-            .buffer = undefined,
+            .module = mod,
+            .buffer = [_]f32{0.} ** max_callback_len,
         });
         return try self.base.graph.addNode(id);
     }
@@ -269,17 +282,19 @@ pub const Controller = struct {
     }
 
     pub fn pushChanges(
-        self: Self,
+        self: *Self,
         now: u64,
         workspace_allocator: *Allocator,
     ) !void {
-        self.base.sort(workspace_allocator);
-        self.base.temp_in_bufs.ensureCapacity(self.max_inputs);
+        var to_send = try self.base.clone();
+        try to_send.sort(workspace_allocator);
+        try to_send.temp_in_bufs.ensureCapacity(self.max_inputs);
         // TODO you have to clone here
         // this send here takes ownership
         // actual AudioGraphBase the controller started with is never sent to the other thread
         //   can be deinited normally when controller is deinited
-        self.tx.send(now, self.base.clone());
+        // TODO theres an error here for if channel is full
+        self.tx.send(now, to_send) catch unreachable;
     }
 
     pub fn frame(self: *Self) void {

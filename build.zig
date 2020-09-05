@@ -4,6 +4,18 @@ pub fn build(b: *Builder) void {
     const target = b.standardTargetOptions(.{});
     const mode = b.standardReleaseOptions();
 
+    var tests = b.addTest("src/main.zig");
+    tests.setBuildMode(mode);
+
+    tests.addLibPath("/usr/lib");
+    tests.addIncludeDir("/usr/include");
+    tests.linkSystemLibrary("c");
+    tests.linkSystemLibrary("portaudio");
+    tests.addPackagePath("nitori", "lib/nitori/src/main.zig");
+
+    const test_step = b.step("test", "Run tests");
+    test_step.dependOn(&tests.step);
+
     const exe = b.addExecutable("kasumi", "src/main.zig");
     exe.setTarget(target);
     exe.setBuildMode(mode);
