@@ -1,16 +1,12 @@
 const std = @import("std");
 
-const audio_graph = @import("../audio_graph.zig");
-const InBuffer = audio_graph.InBuffer;
-const Sample = audio_graph.Sample;
-
-const system = @import("../system.zig");
-const CallbackContext = system.CallbackContext;
+usingnamespace @import("../module.zig").prelude;
 
 //;
 
 pub const Sine = struct {
     const Self = @This();
+
     frame_ct: u32,
     freq: f32,
 

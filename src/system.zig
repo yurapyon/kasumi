@@ -6,14 +6,14 @@ const communication = nitori.communication;
 const Channel = communication.Channel;
 const EventChannel = communication.EventChannel;
 const ChunkIterator = nitori.chunks.ChunkIterator;
+const Timer = nitori.timer.Timer;
+
+//;
 
 const audio_graph = @import("audio_graph.zig");
 usingnamespace audio_graph;
 
 const c = @import("c.zig");
-
-const module = @import("module.zig");
-const Module = module.Module;
 
 //;
 
@@ -33,25 +33,22 @@ pub fn callback(
     status_flags: c.PaStreamCallbackFlags,
     userdata: ?*c_void,
 ) callconv(.C) c_int {
-    var out_ptr = @ptrCast([*]f32, @alignCast(4, output));
+    var out_ptr = @ptrCast([*]f32, @alignCast(@alignOf(f32), output));
     var out_slice = out_ptr[0 .. frame_ct * 2];
-
-    var graph = @ptrCast(*AudioGraph, @alignCast(@alignOf(AudioGraph), userdata));
+    var sys = @ptrCast(*System, @alignCast(@alignOf(System), userdata));
 
     var ctx = CallbackContext{
-        // TODO
-        .sample_rate = 44100,
+        .sample_rate = sys.settings.sample_rate,
         .frame_len = out_slice.len,
-        // TODO
-        .now = 0,
+        .now = sys.tm.now(),
     };
 
-    graph.frame(ctx);
+    sys.graph.frame(ctx);
 
     var chunks = ChunkIterator(Sample).init(out_slice, audio_graph.max_callback_len);
     while (chunks.next()) |chunk| {
         ctx.frame_len = chunk.len;
-        graph.compute(ctx, chunk);
+        sys.graph.compute(ctx, chunk);
     }
 
     return 0;
@@ -81,6 +78,8 @@ pub const System = struct {
     channel: Channel(AudioGraphBase),
     event_channel: EventChannel(AudioGraphBase),
 
+    tm: Timer,
+
     pub fn queryDeviceNames(allocator: *Allocator) void {}
 
     pub fn init(self: *Self, settings: Settings) !void {
@@ -93,6 +92,8 @@ pub const System = struct {
 
         self.graph = AudioGraph.init(allocator, &self.channel, &self.event_channel);
         self.controller = Controller.init(allocator, &self.channel, &self.event_channel);
+
+        self.tm = Timer.start();
 
         var err = c.Pa_Initialize();
         if (err != c.paNoError) {
@@ -108,6 +109,7 @@ pub const System = struct {
             .sampleFormat = c.paFloat32,
             .suggestedLatency = settings.suggested_latency,
         };
+
         err = c.Pa_OpenStream(
             &stream,
             null,
@@ -116,19 +118,29 @@ pub const System = struct {
             c.paFramesPerBufferUnspecified,
             c.paNoFlag,
             callback,
-            &self.graph,
+            self,
         );
-        // check err
-        // errdefer close stream
+        if (err != c.paNoError) {
+            return error.CouldntInitStream;
+        }
+        errdefer c.Pa_closeStream(stream);
 
         _ = c.Pa_StartStream(stream);
+
+        std.log.warn("initover", .{});
 
         self.stream = stream.?;
     }
 
-    pub fn deinit() void {
-        // stop stream
-        // close stream
-        c.Pa_Terminate();
+    pub fn deinit(self: *Self) void {
+        // TODO stop stream
+        // TODO check err
+        _ = c.Pa_CloseStream(self.stream);
+        _ = c.Pa_Terminate();
+
+        self.controller.deinit();
+        self.graph.deinit();
+        self.event_channel.deinit();
+        self.channel.deinit();
     }
 };

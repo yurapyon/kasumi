@@ -29,7 +29,7 @@ pub const Sample = f32;
 
 pub const GraphModule = struct {
     module: Module,
-    // TODO change this to a ptr
+    // TODO change this to a ptr / allocate and own it
     buffer: [max_callback_len]Sample,
 };
 
@@ -99,10 +99,14 @@ pub const AudioGraphBase = struct {
         var ret: Self = undefined;
         ret.allocator = self.allocator;
         ret.modules = try cloneArrayList(GraphModule, self.allocator, self.modules);
+        errdefer ret.modules.deinit();
         ret.graph = try self.graph.clone(self.allocator);
+        errdefer ret.graph.deinit();
         ret.sorted = try self.allocator.dupe(NodeIndex, self.sorted);
+        errdefer self.allocator.free(ret.sorted);
         ret.output = self.output;
         ret.temp_in_bufs = try cloneArrayList(InBuffer, self.allocator, self.temp_in_bufs);
+        errdefer ret.temp_in_bufs.deinit();
         ret.removals = try cloneArrayList(usize, self.allocator, self.removals);
         return ret;
     }
@@ -131,13 +135,14 @@ pub const AudioGraph = struct {
         };
     }
 
-    // deinit is called when audio thread is killed
+    // deinit is called after audio thread is killed
     pub fn deinit(self: *Self) void {
         self.base.deinit();
     }
 
     //;
 
+    // TODO move to base
     fn moduleIdxFromNodeIdx(self: Self, idx: NodeIndex) usize {
         return self.base.graph.nodes.items[idx].weight;
     }
@@ -157,7 +162,7 @@ pub const AudioGraph = struct {
     }
 
     // TODO handle buffer max len more robustly
-    //   as is, out arg can be any size
+    //   as is, out param can be any size
     pub fn compute(self: *Self, ctx: CallbackContext, out: []Sample) void {
         if (self.base.output) |output_idx| {
             for (self.base.sorted) |idx| {
@@ -218,6 +223,11 @@ pub const Controller = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        for (self.base.graph.nodes.items) |*node| {
+            if (node.in_use) {
+                self.base.modules.items[node.weight].module.deinit();
+            }
+        }
         self.base.deinit();
     }
 
@@ -229,7 +239,7 @@ pub const Controller = struct {
             if (node.in_use) {
                 var input_ct = 0;
                 var edge_iter = self.base.graph.edgesDirected(idx, .Incoming);
-                while (edge_iter.next()) : (input_ct += 1) {}
+                while (edge_iter.next()) |_| : (input_ct += 1) {}
                 if (input_ct > self.max_inputs) {
                     self.max_inputs = input_ct;
                 }
@@ -252,18 +262,19 @@ pub const Controller = struct {
         self: *Self,
         source: NodeIndex,
         target: NodeIndex,
-        input_numnber: usize,
+        input_number: usize,
     ) !EdgeIndex {
         const edge_idx = try self.base.graph.addEdge(source, target, input_number);
-        var input_ct = 0;
+        var input_ct: usize = 0;
         var edge_iter = self.base.graph.edgesDirected(target, .Incoming);
-        while (edge_iter.next()) : (input_ct += 1) {}
+        while (edge_iter.next()) |_| : (input_ct += 1) {}
         if (input_ct > self.max_inputs) {
             self.max_inputs = input_ct;
         }
         return edge_idx;
     }
 
+    // TODO check removals work
     // remove by node id
     //   module id is just uzsed internally
     pub fn removeModule(self: *Self, node_idx: NodeIndex) void {
@@ -286,13 +297,17 @@ pub const Controller = struct {
         now: u64,
         workspace_allocator: *Allocator,
     ) !void {
-        var to_send = try self.base.clone();
-        try to_send.sort(workspace_allocator);
-        try to_send.temp_in_bufs.ensureCapacity(self.max_inputs);
         // TODO you have to clone here
         // this send here takes ownership
         // actual AudioGraphBase the controller started with is never sent to the other thread
         //   can be deinited normally when controller is deinited
+        var to_send = try self.base.clone();
+
+        try to_send.sort(workspace_allocator);
+        try to_send.temp_in_bufs.ensureCapacity(self.max_inputs);
+        // TODO do i really wana do this
+        to_send.temp_in_bufs.items.len = self.max_inputs;
+
         // TODO theres an error here for if channel is full
         self.tx.send(now, to_send) catch unreachable;
     }
@@ -300,8 +315,8 @@ pub const Controller = struct {
     pub fn frame(self: *Self) void {
         if (self.rx.tryRecv()) |*swap| {
             for (swap.removals.items) |module_idx| {
-                swap.modules.items[module_idx].deinit();
-                swap.modules.orderedRemove(module_idx);
+                var gm = swap.modules.orderedRemove(module_idx);
+                gm.module.deinit();
             }
             // ??
             // TODO deinit and free and stuff
