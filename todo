@@ -1,1 +1,7 @@
 find cross platform soundfile loader
+
+mixer module
+buf player module
+
+event sequencing, timing
+how to integrate with a tracker

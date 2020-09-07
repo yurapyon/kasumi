@@ -1,1 +1,3 @@
-const SampleBuffer = struct {};
+const SampleBuffer = struct {
+    data: []Sample,
+};
