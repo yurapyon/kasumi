@@ -25,18 +25,16 @@ const CallbackContext = system.CallbackContext;
 
 pub const max_callback_len: usize = 2048;
 
-pub const Sample = f32;
-
 pub const GraphModule = struct {
     module: Module,
     // TODO change this to a ptr / allocate and own it
-    buffer: [max_callback_len]Sample,
+    buffer: [max_callback_len]f32,
 };
 
 // TODO move this to module.zig maybe
 pub const InBuffer = struct {
     id: usize,
-    buf: []const Sample,
+    buf: []const f32,
 };
 
 //;
@@ -163,7 +161,7 @@ pub const AudioGraph = struct {
 
     // TODO handle buffer max len more robustly
     //   as is, out param can be any size
-    pub fn compute(self: *Self, ctx: CallbackContext, out: []Sample) void {
+    pub fn compute(self: *Self, ctx: CallbackContext, out: []f32) void {
         if (self.base.output) |output_idx| {
             for (self.base.sorted) |idx| {
                 const module_idx = self.moduleIdxFromNodeIdx(idx);
@@ -187,9 +185,9 @@ pub const AudioGraph = struct {
                 );
             }
 
-            std.mem.copy(Sample, out, self.base.modules.items[output_idx].buffer[0..ctx.frame_len]);
+            std.mem.copy(f32, out, self.base.modules.items[output_idx].buffer[0..ctx.frame_len]);
         } else {
-            std.mem.set(Sample, out, 0.);
+            std.mem.set(f32, out, 0.);
         }
     }
 };

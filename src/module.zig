@@ -10,7 +10,6 @@ const EventChannel = nitori.communication.EventChannel;
 pub const prelude = struct {
     pub const audio_graph = @import("audio_graph.zig");
     pub const InBuffer = audio_graph.InBuffer;
-    pub const Sample = audio_graph.Sample;
 
     pub const system = @import("system.zig");
     pub const CallbackContext = system.CallbackContext;
@@ -36,7 +35,7 @@ pub const Module = struct {
             *Impl,
             CallbackContext,
             []const InBuffer,
-            []Sample,
+            []f32,
         ) void,
         // TODO should this be a special function specific to modules and not a general deinit?
         deinit: ?fn (*Impl) void,
@@ -68,7 +67,7 @@ pub const Module = struct {
         self: *Self,
         ctx: CallbackContext,
         in_buffers: []const InBuffer,
-        out_buffer: []Sample,
+        out_buffer: []f32,
     ) void {
         self.vtable.compute(self.impl, ctx, in_buffers, out_buffer);
     }
@@ -119,7 +118,7 @@ pub fn Controlled(comptime T: type) type {
             self: *Self,
             ctx: CallbackContext,
             inputs: []const InBuffer,
-            output: []Sample,
+            output: []f32,
         ) void {
             self.inner_module.compute(ctx, inputs, output);
         }

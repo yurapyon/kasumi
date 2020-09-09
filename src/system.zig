@@ -45,7 +45,7 @@ pub fn callback(
 
     sys.graph.frame(ctx);
 
-    var chunks = ChunkIterator(Sample).init(out_slice, audio_graph.max_callback_len);
+    var chunks = ChunkIterator(f32).init(out_slice, audio_graph.max_callback_len);
     while (chunks.next()) |chunk| {
         ctx.frame_len = chunk.len;
         sys.graph.compute(ctx, chunk);
