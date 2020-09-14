@@ -49,9 +49,9 @@ test "main" {
     try play_ctlr.send(sys.tm.now(), .{ .setPlayPosition = 1000 });
     try play_ctlr.send(sys.tm.now(), .{ .setAntiClick = true });
     try play_ctlr.send(sys.tm.now(), .play);
-    try play_ctlr.send(sys.tm.now() + 900000000, .pause);
+    try play_ctlr.send(sys.tm.now() + 700000000, .pause);
     try play_ctlr.send(sys.tm.now() + 970000000, .play);
-    try play_ctlr.send(sys.tm.now(), .{ .setLoop = false });
+    try play_ctlr.send(sys.tm.now(), .{ .setLoop = true });
 
     //     var sine = modules.Sine.init(440.);
     //     var util = modules.Utility.init();
