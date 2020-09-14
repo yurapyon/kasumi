@@ -13,20 +13,17 @@ const SampleBuffer = @import("../sample_buffer.zig").SampleBuffer;
 //         precalculate fadeins and outs in the sampledata itself,
 //           or if a change in fading is ever needed, do it deliberately with some other module
 
-// TODO anti-click fading
-//   on starting the sample or reaching the end of it, fade needs to be preemted
-//     fade early
-//   on stop or pause, you need to start the fade and continure reading ahead
-//     fade late
-//     if stopping right before the end. fade should already be happening and not be changed
-//   on loop fade, renoise does this
+// state == .PrePause isnt the same as pause_timer > 0
+//   because pause_timer could be positive, then play is pressed afterwards
+
+// pausing is annoying because
+//   maybe you want it to happen instantaneously from when its called from the main thread
+//   message passing will delay that timing
+// maybe just have an atomicPause/Play that atomically pauses it and is thread safe
+
 // TODO note: currently playrate changes click length
 //        "okay" for down pitch, not okay for up pitch, might be skipping frames
-// TODO stop_timer has to 'ghost' so that if you pause,
-//        the timer goes beyond where you paused and doesnt actually influence frame_at
-//      also setting state to .Stopped and then having sound contine to play after
-//        gets in the way of some of the logic of stuff youre suposed to do after you stop
-//        also mackes the check for state == .Playing ugly
+
 pub const SamplePlayer = struct {
     const Self = @This();
 
@@ -43,8 +40,8 @@ pub const SamplePlayer = struct {
 
     pub const State = enum {
         Playing,
+        PrePause,
         Paused,
-        Stopped,
     };
 
     // TODO use this
@@ -65,7 +62,9 @@ pub const SamplePlayer = struct {
     //        not going to be changing it ever
     anti_click_len: u32,
     play_timer: u32,
-    stop_timer: u32,
+    pause_timer: u32,
+    pause_frame_at: usize,
+    pause_remainder: f32,
 
     state: State,
     play_rate: f32,
@@ -77,11 +76,13 @@ pub const SamplePlayer = struct {
             .frame_at = 0,
             .remainder = 0.,
             .sample_rate_mult = 1.,
-            .do_anti_click = true,
-            .anti_click_len = 100,
+            .do_anti_click = false,
+            .anti_click_len = 1000,
             .play_timer = 0,
-            .stop_timer = 0,
-            .state = .Stopped,
+            .pause_timer = 0,
+            .pause_frame_at = 0,
+            .pause_remainder = 0.,
+            .state = .Paused,
             .play_rate = 1.,
             .do_loop = false,
         };
@@ -94,52 +95,75 @@ pub const SamplePlayer = struct {
         output: []f32,
     ) void {
         if (self.curr_sample) |sample| {
-            if (self.state == .Playing or
-                (self.stop_timer > 0 and self.frame_at < sample.frame_ct))
-            {
+            if (self.state != .Paused) {
                 var ct: usize = 0;
                 var float_ct: f32 = 0;
                 while (ct < ctx.frame_len) : (ct += 2) {
+                    // anti-click fading
+                    //   on starting the sample or reaching the end of it, fade is preempted
+                    //     this takes precendence over pausing or playing;
+                    //       if we're within the bounds of start and end, use this fade
+                    //     TODO the logic for this isnt right
+                    //            only handles the case if you pause while within the end window
+                    //            misses the case when you play while in the sart window
+                    //                         or when you pause and continue into the end window
+                    //   on pause, you need to start the fade and continue reading ahead
+                    //     switches state to PrePause, and saves the spot to return to once paused
+                    //   on loop, fade (renoise does this)
                     const atten = if (!self.do_anti_click) blk: {
                         break :blk 1.;
                     } else if (self.frame_at < self.anti_click_len) blk: {
+                        // TODO you also need to do a max and min here with the pause and play timers
+                        //        and below
+                        // pause timer here
                         const f_fa = @intToFloat(f32, self.frame_at);
                         const f_ac = @intToFloat(f32, self.anti_click_len);
                         break :blk f_fa / f_ac;
                     } else if (self.frame_at > sample.frame_ct - self.anti_click_len) blk: {
+                        // TODO >>> here
                         const f_fa = @intToFloat(f32, sample.frame_ct - self.frame_at);
                         const f_ac = @intToFloat(f32, self.anti_click_len);
                         break :blk f_fa / f_ac;
-                    } else if (self.play_timer > 0 and self.stop_timer > 0) blk: {
-                        // TODO if play happened before stop, this should be min
-                        //      if stop happened before play, this should be max
-                        const f_tm = @intToFloat(f32, std.math.max(
-                            self.play_timer,
-                            self.stop_timer,
-                        ));
+                    } else if (self.play_timer > 0 and self.pause_timer > 0) blk: {
+                        const f_tm = if (self.state == .PrePause) blk_: {
+                            break :blk_ @intToFloat(f32, std.math.min(
+                                self.anti_click_len - self.play_timer,
+                                self.pause_timer,
+                            ));
+                        } else blk_: {
+                            break :blk_ @intToFloat(f32, std.math.max(
+                                self.anti_click_len - self.play_timer,
+                                self.pause_timer,
+                            ));
+                        };
                         const f_ac = @intToFloat(f32, self.anti_click_len);
-                        self.play_timer -= 1;
-                        self.stop_timer -= 1;
                         break :blk f_tm / f_ac;
                     } else if (self.play_timer > 0) blk: {
                         const f_pt = @intToFloat(f32, self.anti_click_len - self.play_timer);
                         const f_ac = @intToFloat(f32, self.anti_click_len);
-                        self.play_timer -= 1;
                         break :blk f_pt / f_ac;
-                    } else if (self.stop_timer > 0) blk: {
-                        // std.log.warn("{}\n", .{self.stop_timer});
-                        const f_st = @intToFloat(f32, self.stop_timer);
+                    } else if (self.pause_timer > 0) blk: {
+                        const f_st = @intToFloat(f32, self.pause_timer);
                         const f_ac = @intToFloat(f32, self.anti_click_len);
-                        self.stop_timer -= 1;
                         break :blk f_st / f_ac;
                     } else 1.;
 
-                    if (self.state == .Stopped and self.stop_timer == 0) {
-                        while (ct < ctx.frame_len) : (ct += 2) {
-                            output[ct] = 0.;
-                            output[ct + 1] = 0.;
+                    if (self.play_timer > 0) {
+                        self.play_timer -= 1;
+                    }
+
+                    if (self.pause_timer > 0) {
+                        self.pause_timer -= 1;
+                        if (self.state == .PrePause and self.pause_timer == 0) {
+                            self.state = .Paused;
+                            self.frame_at = self.pause_frame_at;
+                            self.remainder = self.pause_remainder;
+                            while (ct < ctx.frame_len) : (ct += 2) {
+                                output[ct] = 0.;
+                                output[ct + 1] = 0.;
+                            }
+                            return;
                         }
-                        return;
                     }
 
                     switch (sample.channel_ct) {
@@ -161,11 +185,12 @@ pub const SamplePlayer = struct {
 
                         if (self.frame_at >= sample.frame_ct) {
                             if (self.do_loop) {
+                                // TODO do you want to do the soft play or a hard play here?
+                                self.play();
                                 self.frame_at = 0;
                             } else {
-                                self.stop();
-                                self.stop_timer = 0;
-                                // std.log.warn("fa {}", .{self.frame_at});
+                                self.state = .Paused;
+                                self.pause_timer = 0;
                                 ct += 2;
                                 while (ct < ctx.frame_len) : (ct += 2) {
                                     output[ct] = 0.;
@@ -207,23 +232,33 @@ pub const SamplePlayer = struct {
     }
 
     pub fn pause(self: *Self) void {
-        self.state = .Paused;
-        self.stop_timer = self.anti_click_len;
+        if (self.do_anti_click) {
+            self.state = .PrePause;
+            self.pause_timer = self.anti_click_len;
+            self.pause_frame_at = self.frame_at;
+            self.pause_remainder = self.remainder;
+        } else {
+            self.state = .Paused;
+        }
     }
 
     pub fn stop(self: *Self) void {
-        self.state = .Stopped;
-        self.stop_timer = self.anti_click_len;
-        // TODO cant do this because of stop_timer
-        // self.frame_at = 0;
+        if (self.do_anti_click) {
+            self.state = .PrePause;
+            self.pause_timer = self.anti_click_len;
+            self.pause_frame_at = 0;
+            self.pause_remainder = 0;
+        } else {
+            self.state = .Paused;
+        }
     }
 
     pub fn setSample(self: *Self, ctx: CallbackContext, sample: *const SampleBuffer) void {
-        // std.log.warn("fc {}", .{sample.frame_ct});
         self.curr_sample = sample;
         self.frame_at = 0;
         self.remainder = 0.;
-        self.sample_rate_mult = @intToFloat(f32, sample.sample_rate) / @intToFloat(f32, ctx.sample_rate);
+        self.sample_rate_mult = @intToFloat(f32, sample.sample_rate) /
+            @intToFloat(f32, ctx.sample_rate);
         self.state = .Paused;
     }
 };
