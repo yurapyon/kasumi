@@ -23,7 +23,7 @@ pub const Header = struct {
     byte_ct: u32,
 };
 
-// TODO change this api
+// TODO change this api, big rewrite
 // have loader be an obj that has a reader and verbose boolean
 
 // parameterized namespace thing

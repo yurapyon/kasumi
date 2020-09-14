@@ -81,6 +81,7 @@ pub const System = struct {
     tm: Timer,
 
     // TODO
+    //  return name and id in a struct
     pub fn queryDeviceNames(allocator: *Allocator) void {}
 
     pub fn init(self: *Self, settings: Settings) !void {

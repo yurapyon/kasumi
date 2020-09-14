@@ -292,8 +292,8 @@ pub const Controller = struct {
 
     pub fn pushChanges(
         self: *Self,
-        now: u64,
         workspace_allocator: *Allocator,
+        now: u64,
     ) !void {
         // TODO you have to clone here
         // this send here takes ownership

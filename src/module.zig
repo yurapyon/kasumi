@@ -90,17 +90,19 @@ pub fn Controlled(comptime T: type) type {
         };
 
         inner_module: Module,
-        inner: *T,
+        inner: T,
 
         channel: EvChannel,
         rx: EvChannel.Receiver,
 
-        pub fn init(self: *Self, inner: *T, allocator: *Allocator, message_ct: usize) !void {
-            self.inner_module = Module.init(inner);
+        pub fn init(self: *Self, allocator: *Allocator, message_ct: usize, inner: T) !void {
             self.inner = inner;
+            self.inner_module = Module.init(&self.inner);
             self.channel = try EvChannel.init(allocator, message_ct);
             self.rx = self.channel.makeReceiver();
         }
+
+        //;
 
         pub fn deinit(self: *Self) void {
             self.channel.deinit();

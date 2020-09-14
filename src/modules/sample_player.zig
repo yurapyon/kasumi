@@ -21,8 +21,15 @@ const SampleBuffer = @import("../sample_buffer.zig").SampleBuffer;
 //   message passing will delay that timing
 // maybe just have an atomicPause/Play that atomically pauses it and is thread safe
 
+// maybe 'pausing' is just not necessary
+
 // TODO note: currently playrate changes click length
 //        "okay" for down pitch, not okay for up pitch, might be skipping frames
+//      instead of using frame_at, use some raw frame_ct that just counts up
+//      an 'actual frame_ct' thats adusted for the playback rate? or something
+
+// TODO handle loop points
+//      loop points are okay to click if looping between them
 
 pub const SamplePlayer = struct {
     const Self = @This();
@@ -105,22 +112,33 @@ pub const SamplePlayer = struct {
                     //       if we're within the bounds of start and end, use this fade
                     //     TODO the logic for this isnt right
                     //            only handles the case if you pause while within the end window
-                    //            misses the case when you play while in the sart window
+                    //            misses the case when you play while in the start window
                     //                         or when you pause and continue into the end window
+                    //          or if looping and play is initiated in the previous end window
+                    //          TODO turn start and end points into pause and play points
                     //   on pause, you need to start the fade and continue reading ahead
                     //     switches state to PrePause, and saves the spot to return to once paused
                     //   on loop, fade (renoise does this)
+                    //     maybe dont do this,
+                    //     gets weird with loop points, weird behavior
+                    //       also complicates things, need to check in multiple spots if we;re looping
                     const atten = if (!self.do_anti_click) blk: {
                         break :blk 1.;
                     } else if (self.frame_at < self.anti_click_len) blk: {
                         // TODO you also need to do a max and min here with the pause and play timers
                         //        and below
                         // pause timer here
+
+                        // get rid of this,
+                        //   anytime we reach that begining of the buffer, we will have play_timer > 0
+                        // TODO change to be: 'if frame_at is 0 init a play'
                         const f_fa = @intToFloat(f32, self.frame_at);
                         const f_ac = @intToFloat(f32, self.anti_click_len);
                         break :blk f_fa / f_ac;
                     } else if (self.frame_at > sample.frame_ct - self.anti_click_len) blk: {
                         // TODO >>> here
+
+                        // TODO just pause here
                         const f_fa = @intToFloat(f32, sample.frame_ct - self.frame_at);
                         const f_ac = @intToFloat(f32, self.anti_click_len);
                         break :blk f_fa / f_ac;
@@ -148,6 +166,9 @@ pub const SamplePlayer = struct {
                         break :blk f_st / f_ac;
                     } else 1.;
 
+                    // TODO only do these if anticlick is on
+                    //        use if statement above
+                    // {
                     if (self.play_timer > 0) {
                         self.play_timer -= 1;
                     }
@@ -155,6 +176,9 @@ pub const SamplePlayer = struct {
                     if (self.pause_timer > 0) {
                         self.pause_timer -= 1;
                         if (self.state == .PrePause and self.pause_timer == 0) {
+                            // TODO
+                            // check if youre looping here,
+                            //   if so, play again
                             self.state = .Paused;
                             self.frame_at = self.pause_frame_at;
                             self.remainder = self.pause_remainder;
@@ -165,6 +189,7 @@ pub const SamplePlayer = struct {
                             return;
                         }
                     }
+                    // }
 
                     switch (sample.channel_ct) {
                         1 => {
@@ -227,6 +252,8 @@ pub const SamplePlayer = struct {
     //;
 
     pub fn play(self: *Self) void {
+        // TODO only reset play timer if not playing
+        //   ext: only reset timers if changing state
         self.state = .Playing;
         self.play_timer = self.anti_click_len;
     }

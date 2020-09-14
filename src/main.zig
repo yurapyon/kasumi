@@ -31,17 +31,14 @@ test "main" {
 
     var graph_ctl = &sys.controller;
 
-    var play = modules.SamplePlayer.init();
-
-    // TODO make a function for this, returns a tuple of ctl and ctlr
     var play_ctl: module.Controlled(SamplePlayer) = undefined;
-    try play_ctl.init(&play, std.testing.allocator, 10);
+    try play_ctl.init(std.testing.allocator, 10, modules.SamplePlayer.init());
     var play_ctlr = play_ctl.makeController();
 
     var play_idx = try graph_ctl.addModule(module.Module.init(&play_ctl));
     graph_ctl.setOutput(play_idx);
 
-    try graph_ctl.pushChanges(0, std.testing.allocator);
+    try graph_ctl.pushChanges(std.testing.allocator, sys.tm.now());
 
     const file = @embedFile("../content/amen_brother.wav");
     var smp = try SampleBuffer.initWav(std.testing.allocator, file);
