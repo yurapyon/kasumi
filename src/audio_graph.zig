@@ -86,7 +86,7 @@ pub const AudioGraphBase = struct {
         self.graph.deinit();
     }
 
-    //!
+    //;
 
     fn sort(self: *Self, workspace_allocator: *Allocator) !void {
         self.sorted = try self.graph.toposort(self.allocator, workspace_allocator);
@@ -160,7 +160,7 @@ pub const AudioGraph = struct {
     }
 
     // TODO handle buffer max len more robustly
-    //   as is, out param can be any size
+    //   as is, out[]f32 param can be any len
     pub fn compute(self: *Self, ctx: CallbackContext, out: []f32) void {
         if (self.base.output) |output_idx| {
             for (self.base.sorted) |idx| {
@@ -272,7 +272,7 @@ pub const Controller = struct {
         return edge_idx;
     }
 
-    // TODO check removals work
+    // TODO test removals
     // remove by node id
     //   module id is just uzsed internally
     pub fn removeModule(self: *Self, node_idx: NodeIndex) void {

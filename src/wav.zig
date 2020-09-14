@@ -23,6 +23,9 @@ pub const Header = struct {
     byte_ct: u32,
 };
 
+// TODO change this api
+// have loader be an obj that has a reader and verbose boolean
+
 // parameterized namespace thing
 //   not a generic struct
 pub fn Loader(comptime Reader: type, comptime verbose: bool) type {
@@ -176,6 +179,7 @@ pub fn Loader(comptime Reader: type, comptime verbose: bool) type {
         // TODO make this a more generic thing that acts on a buf of [u8] or whatever
         // TODO use the output as scratch space ??
         // note: very sublty clips values of i16 and i32 wavs
+        // TODO move workspace alloc to the begining
         pub fn loadConvert_F32(
             reader: *Reader,
             header: Header,

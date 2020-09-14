@@ -25,7 +25,7 @@ pub const CallbackContext = struct {
 
 //;
 
-pub fn callback(
+fn callback(
     input: ?*const c_void,
     output: ?*c_void,
     frame_ct: c_ulong,
@@ -80,6 +80,7 @@ pub const System = struct {
 
     tm: Timer,
 
+    // TODO
     pub fn queryDeviceNames(allocator: *Allocator) void {}
 
     pub fn init(self: *Self, settings: Settings) !void {
@@ -99,7 +100,9 @@ pub const System = struct {
         if (err != c.paNoError) {
             return error.CouldntInitPortAudio;
         }
-        errdefer c.Pa_Terminate();
+        errdefer {
+            _ = c.Pa_Terminate();
+        }
 
         var stream: ?*c.PaStream = null;
         var output_params = c.PaStreamParameters{
@@ -126,8 +129,6 @@ pub const System = struct {
         errdefer c.Pa_closeStream(stream);
 
         _ = c.Pa_StartStream(stream);
-
-        std.log.warn("initover", .{});
 
         self.stream = stream.?;
     }

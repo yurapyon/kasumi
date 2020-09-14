@@ -21,7 +21,7 @@ pub const Sine = struct {
         self: *Self,
         ctx: CallbackContext,
         _inputs: []const InBuffer,
-        output: []Sample,
+        output: []f32,
     ) void {
         const srate_f = @intToFloat(f32, ctx.sample_rate);
         const period_base = std.math.tau / srate_f;

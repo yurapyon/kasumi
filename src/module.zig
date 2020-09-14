@@ -18,6 +18,7 @@ pub const prelude = struct {
 pub const modules = struct {
     usingnamespace @import("modules/sine.zig");
     usingnamespace @import("modules/util.zig");
+    usingnamespace @import("modules/sample_player.zig");
 };
 
 //;
@@ -49,10 +50,12 @@ pub const Module = struct {
 
     pub fn init(module: anytype) Self {
         return .{
-            .vtable = comptime vtable.populate(VTable, @TypeOf(module).Child),
+            .vtable = comptime vtable.populate(VTable, @typeInfo(@TypeOf(module)).Pointer.child),
             .impl = @ptrCast(*VTable.Impl, module),
         };
     }
+
+    //;
 
     // TODO this is a deinit of the inner data, not related to the module instance itself
     pub fn deinit(self: *Self) void {
@@ -76,12 +79,12 @@ pub const Module = struct {
 pub fn Controlled(comptime T: type) type {
     return struct {
         const Self = @This();
-        const EvChannel = EventChannel(fn (*T) void);
+        const EvChannel = EventChannel(T.Message);
 
         pub const Controller = struct {
             tx: EvChannel.Sender,
 
-            pub fn send(self: *Controller, now: u64, msg: fn (*T) void) !void {
+            pub fn send(self: *Controller, now: u64, msg: T.Message) !void {
                 return self.tx.send(now, msg);
             }
         };
@@ -109,7 +112,7 @@ pub fn Controlled(comptime T: type) type {
             ctx: CallbackContext,
         ) void {
             while (self.rx.tryRecv(ctx.now)) |msg| {
-                msg.data(self.inner);
+                self.inner.takeMessage(ctx, msg.data);
             }
             self.inner_module.frame(ctx);
         }

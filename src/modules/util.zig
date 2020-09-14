@@ -21,9 +21,9 @@ pub const Utility = struct {
         self: *Self,
         ctx: CallbackContext,
         inputs: []const InBuffer,
-        output: []Sample,
+        output: []f32,
     ) void {
-        var found: ?[]const Sample = null;
+        var found: ?[]const f32 = null;
         for (inputs) |input| {
             if (input.id == 0) {
                 found = input.buf;
