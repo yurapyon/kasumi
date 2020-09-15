@@ -26,6 +26,8 @@ pub const Header = struct {
 // TODO change this api, big rewrite
 // have loader be an obj that has a reader and verbose boolean
 
+// TODO handle f32 wavs
+
 // parameterized namespace thing
 //   not a generic struct
 pub fn Loader(comptime Reader: type, comptime verbose: bool) type {

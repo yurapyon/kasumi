@@ -1,10 +1,10 @@
 const std = @import("std");
 
-const audio_graph = @import("audio_graph.zig");
-const system = @import("system.zig");
-const module = @import("module.zig");
-const modules = module.modules;
-const sample_buffer = @import("sample_buffer.zig");
+pub const audio_graph = @import("audio_graph.zig");
+pub const system = @import("system.zig");
+pub const module = @import("module.zig");
+pub const modules = module.modules;
+pub const sample_buffer = @import("sample_buffer.zig");
 
 const Utility = modules.Utility;
 const SamplePlayer = modules.SamplePlayer;

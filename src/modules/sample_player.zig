@@ -153,6 +153,7 @@ pub const SamplePlayer = struct {
                         2 => {
                             output[ct] = sample.data.items[self.frame_at] * atten;
                             output[ct + 1] = sample.data.items[self.frame_at + 1] * atten;
+                            self.frame_at += 1;
                         },
                         else => unreachable,
                     }
