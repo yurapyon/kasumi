@@ -5,7 +5,7 @@ const nitori = @import("nitori");
 const communication = nitori.communication;
 const Channel = communication.Channel;
 const EventChannel = communication.EventChannel;
-const ChunkIterator = nitori.chunks.ChunkIterator;
+const ChunkIterMut = nitori.chunks.ChunkIterMut;
 const Timer = nitori.timer.Timer;
 
 //;
@@ -13,15 +13,10 @@ const Timer = nitori.timer.Timer;
 const audio_graph = @import("audio_graph.zig");
 usingnamespace audio_graph;
 
+const module = @import("module.zig");
+const Module = module.Module;
+
 const c = @import("c.zig");
-
-//;
-
-pub const CallbackContext = struct {
-    sample_rate: u32,
-    frame_len: usize,
-    now: u64,
-};
 
 //;
 
@@ -37,18 +32,26 @@ fn callback(
     var out_slice = out_ptr[0 .. frame_ct * 2];
     var sys = @ptrCast(*System, @alignCast(@alignOf(System), userdata));
 
-    var ctx = CallbackContext{
-        .sample_rate = sys.settings.sample_rate,
-        .frame_len = out_slice.len,
+    var f_ctx = Module.FrameContext{
         .now = sys.tm.now(),
     };
 
-    sys.graph.frame(ctx);
+    var c_ctx = Module.ComputeContext{
+        .sample_rate = sys.settings.sample_rate,
+        .frame_len = out_slice.len,
+        .inputs = undefined,
+        .output = undefined,
+    };
 
-    var chunks = ChunkIterator(f32).init(out_slice, audio_graph.max_callback_len);
+    sys.graph.frame(f_ctx) catch |err| {
+        // TODO do something with send error
+        unreachable;
+    };
+
+    var chunks = ChunkIterMut(f32).init(out_slice, audio_graph.max_callback_len);
     while (chunks.next()) |chunk| {
-        ctx.frame_len = chunk.len;
-        sys.graph.compute(ctx, chunk);
+        c_ctx.frame_len = chunk.len;
+        sys.graph.compute(c_ctx, chunk);
     }
 
     return 0;
@@ -59,6 +62,13 @@ fn callback(
 //   for just doing swaps idk
 
 pub const System = struct {
+    const Self = @This();
+
+    pub const InitError = error{
+        CouldntInitPortAudio,
+        CouldntInitStream,
+    } || Allocator.Error || Timer.Error;
+
     pub const Settings = struct {
         allocator: *Allocator,
         device_number: u8,
@@ -66,8 +76,6 @@ pub const System = struct {
         suggested_latency: f32 = 1.,
         sample_rate: u32 = 44100,
     };
-
-    const Self = @This();
 
     settings: Settings,
 
@@ -84,7 +92,7 @@ pub const System = struct {
     //  return name and id in a struct
     pub fn queryDeviceNames(allocator: *Allocator) void {}
 
-    pub fn init(self: *Self, settings: Settings) !void {
+    pub fn init(self: *Self, settings: Settings) InitError!void {
         const allocator = settings.allocator;
 
         self.settings = settings;
@@ -95,11 +103,11 @@ pub const System = struct {
         self.graph = AudioGraph.init(allocator, &self.channel, &self.event_channel);
         self.controller = Controller.init(allocator, &self.channel, &self.event_channel);
 
-        self.tm = Timer.start();
+        self.tm = try Timer.start();
 
         var err = c.Pa_Initialize();
         if (err != c.paNoError) {
-            return error.CouldntInitPortAudio;
+            return InitError.CouldntInitPortAudio;
         }
         errdefer {
             _ = c.Pa_Terminate();

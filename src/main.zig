@@ -31,47 +31,56 @@ test "main" {
 
     var graph_ctl = &sys.controller;
 
-    var play_ctl: module.Controlled(SamplePlayer) = undefined;
-    try play_ctl.init(std.testing.allocator, 10, modules.SamplePlayer.init());
-    var play_ctlr = play_ctl.makeController();
+    //     var play_ctl: module.Controlled(SamplePlayer) = undefined;
+    //     try play_ctl.init(std.testing.allocator, 10, modules.SamplePlayer.init());
+    //     var play_ctlr = play_ctl.makeController();
+    //
+    //     var play_idx = try graph_ctl.addModule(module.Module.init(&play_ctl));
+    //     graph_ctl.setOutput(play_idx);
+    //
+    //     try graph_ctl.pushChanges(std.testing.allocator, sys.tm.now());
+    //
+    //     const file = @embedFile("../content/amen_brother.wav");
+    //     var smp = try SampleBuffer.initWav(std.testing.allocator, file);
+    //     defer smp.deinit();
+    //
+    //     try play_ctlr.send(sys.tm.now(), .{ .setSample = &smp });
+    //     try play_ctlr.send(sys.tm.now(), .{ .setPlayRate = 1. });
+    //     try play_ctlr.send(sys.tm.now(), .{ .setPlayPosition = 1000 });
+    //     try play_ctlr.send(sys.tm.now(), .{ .setAntiClick = true });
+    //     try play_ctlr.send(sys.tm.now(), .play);
+    //     try play_ctlr.send(sys.tm.now() + 700000000, .pause);
+    //     try play_ctlr.send(sys.tm.now() + 970000000, .play);
+    //     try play_ctlr.send(sys.tm.now(), .{ .setLoop = true });
 
-    var play_idx = try graph_ctl.addModule(module.Module.init(&play_ctl));
-    graph_ctl.setOutput(play_idx);
+    var sine = modules.Sine.init(440.);
+    var sine_ctl: module.Controlled(modules.Sine) = undefined;
+    try sine_ctl.init(std.testing.allocator, 10, &sine);
+    defer sine_ctl.deinit();
+    var sine_ctlr = sine_ctl.makeController();
+
+    var util = modules.Utility.init();
+    var util_ctl: module.Controlled(modules.Utility) = undefined;
+    try util_ctl.init(std.testing.allocator, 10, &util);
+    defer util_ctl.deinit();
+    var util_ctlr = util_ctl.makeController();
+
+    const sine_idx = try graph_ctl.addModule(sine_ctl.module());
+    const util_idx = try graph_ctl.addModule(util_ctl.module());
+    _ = try graph_ctl.addEdge(sine_idx, util_idx, 0);
+    graph_ctl.setOutput(util_idx);
 
     try graph_ctl.pushChanges(std.testing.allocator, sys.tm.now());
-
-    const file = @embedFile("../content/amen_brother.wav");
-    var smp = try SampleBuffer.initWav(std.testing.allocator, file);
-    defer smp.deinit();
-
-    try play_ctlr.send(sys.tm.now(), .{ .setSample = &smp });
-    try play_ctlr.send(sys.tm.now(), .{ .setPlayRate = 1. });
-    try play_ctlr.send(sys.tm.now(), .{ .setPlayPosition = 1000 });
-    try play_ctlr.send(sys.tm.now(), .{ .setAntiClick = true });
-    try play_ctlr.send(sys.tm.now(), .play);
-    try play_ctlr.send(sys.tm.now() + 700000000, .pause);
-    try play_ctlr.send(sys.tm.now() + 970000000, .play);
-    try play_ctlr.send(sys.tm.now(), .{ .setLoop = true });
-
-    //     var sine = modules.Sine.init(440.);
-    //     var util = modules.Utility.init();
-    //
-    //     var util_ctl: module.Controlled(Utility) = undefined;
-    //     try util_ctl.init(&util, std.testing.allocator, 10);
-    //
-    //     var util_ctlr = util_ctl.makeController();
-    //
-    //     const sine_idx = try graph_ctl.addModule(module.Module.init(&sine));
-    //     const util_idx = try graph_ctl.addModule(module.Module.init(&util_ctl));
-    //
-    //     _ = try graph_ctl.addEdge(sine_idx, util_idx, 0);
-    //     graph_ctl.setOutput(util_idx);
 
     var in = std.io.getStdIn();
     var buf = [_]u8{ 0, 0, 0 };
     while (buf[0] != 'q') {
         // std.time.sleep(1000000000);
         _ = try in.read(&buf);
+        try sine_ctlr.send(0, .{ .setFreq = 660 });
+        try util_ctlr.send(sys.tm.now(), .{ .setVolume = 0.15 });
+        // util.volume = 0.5;
+
         //         try util_ctlr.send(0, vol0);
         //         graph_ctl.frame();
         //

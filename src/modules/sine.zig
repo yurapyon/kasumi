@@ -1,6 +1,7 @@
 const std = @import("std");
 
-usingnamespace @import("../module.zig").prelude;
+const interface = @import("nitori").interface;
+const Module = @import("../module.zig").Module;
 
 //;
 
@@ -19,9 +20,7 @@ pub const Sine = struct {
 
     pub fn compute(
         self: *Self,
-        ctx: CallbackContext,
-        _inputs: []const InBuffer,
-        output: []f32,
+        ctx: Module.ComputeContext,
     ) void {
         const srate_f = @intToFloat(f32, ctx.sample_rate);
         const period_base = std.math.tau / srate_f;
@@ -32,9 +31,39 @@ pub const Sine = struct {
             const period = frame_f * self.freq * period_base;
 
             const s = std.math.sin(period) * 0.5;
-            output[ct] = s;
-            output[ct + 1] = s;
+            ctx.output[ct] = s;
+            ctx.output[ct + 1] = s;
             self.frame_ct += 1;
+        }
+    }
+
+    // module
+
+    pub fn module(self: *Self) Module {
+        return .{
+            .impl = interface.Impl.init(self),
+            .vtable = &comptime Module.VTable{
+                .compute = module_compute,
+            },
+        };
+    }
+
+    pub fn module_compute(
+        m: Module,
+        ctx: Module.ComputeContext,
+    ) void {
+        m.impl.cast(Self).compute(ctx);
+    }
+
+    //;
+
+    pub const Message = union(enum) {
+        setFreq: f32,
+    };
+
+    pub fn takeMessage(self: *Self, msg: Message) void {
+        switch (msg) {
+            .setFreq => |to| self.freq = to,
         }
     }
 };

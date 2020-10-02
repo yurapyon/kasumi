@@ -2,136 +2,117 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const nitori = @import("nitori");
-const vtable = nitori.vtable;
-const EventChannel = nitori.communication.EventChannel;
+const communication = nitori.communication;
+const interface = nitori.interface;
+const EventChannel = communication.EventChannel;
 
 //;
 
-pub const prelude = struct {
-    pub const audio_graph = @import("audio_graph.zig");
-    pub const InBuffer = audio_graph.InBuffer;
-
-    pub const system = @import("system.zig");
-    pub const CallbackContext = system.CallbackContext;
-};
+// TODO maybe have a *const System in the contexts?
 
 pub const modules = struct {
     usingnamespace @import("modules/sine.zig");
-    usingnamespace @import("modules/util.zig");
-    usingnamespace @import("modules/sample_player.zig");
+    usingnamespace @import("modules/utility.zig");
+    // usingnamespace @import("modules/sample_player.zig");
 };
 
 //;
-
-usingnamespace prelude;
 
 pub const Module = struct {
     const Self = @This();
 
-    const VTable = struct {
-        pub const Impl = @Type(.Opaque);
-
-        frame: ?fn (*Impl, CallbackContext) void,
-        compute: fn (
-            *Impl,
-            CallbackContext,
-            []const InBuffer,
-            []f32,
-        ) void,
-        // TODO should this be a special function specific to modules and not a general deinit?
-        deinit: ?fn (*Impl) void,
-
-        pub fn frame(_module: *Impl, _ctx: CallbackContext) void {}
-        pub fn deinit(_module: *Impl) void {}
+    pub const InBuffer = struct {
+        id: usize,
+        buf: []const f32,
     };
 
+    pub const FrameContext = struct {
+        now: u64,
+    };
+
+    pub const ComputeContext = struct {
+        sample_rate: u32,
+        frame_len: usize,
+        inputs: []const InBuffer,
+        output: []f32,
+    };
+
+    pub const VTable = struct {
+        frame: fn (Self, FrameContext) void = _frame,
+        compute: fn (Self, ComputeContext) void,
+
+        pub fn _frame(module: Self, _ctx: FrameContext) void {}
+    };
+
+    impl: interface.Impl,
     vtable: *const VTable,
-    impl: *VTable.Impl,
-
-    pub fn init(module: anytype) Self {
-        return .{
-            .vtable = comptime vtable.populate(VTable, @typeInfo(@TypeOf(module)).Pointer.child),
-            .impl = @ptrCast(*VTable.Impl, module),
-        };
-    }
-
-    //;
-
-    // TODO this is a deinit of the inner data, not related to the module instance itself
-    pub fn deinit(self: *Self) void {
-        self.vtable.deinit.?(self.impl);
-    }
-
-    pub fn frame(self: *Self, ctx: CallbackContext) void {
-        self.vtable.frame.?(self.impl, ctx);
-    }
-
-    pub fn compute(
-        self: *Self,
-        ctx: CallbackContext,
-        in_buffers: []const InBuffer,
-        out_buffer: []f32,
-    ) void {
-        self.vtable.compute(self.impl, ctx, in_buffers, out_buffer);
-    }
 };
 
 pub fn Controlled(comptime T: type) type {
     return struct {
         const Self = @This();
-        const EvChannel = EventChannel(T.Message);
+        const MsgChannel = EventChannel(T.Message);
 
         pub const Controller = struct {
-            tx: EvChannel.Sender,
+            tx: MsgChannel.Sender,
 
-            pub fn send(self: *Controller, now: u64, msg: T.Message) !void {
+            pub fn send(self: *Controller, now: u64, msg: T.Message) MsgChannel.Error!void {
                 return self.tx.send(now, msg);
             }
         };
 
-        inner_module: Module,
-        inner: T,
+        inner: *T,
+        channel: MsgChannel,
+        rx: MsgChannel.Receiver,
 
-        channel: EvChannel,
-        rx: EvChannel.Receiver,
-
-        pub fn init(self: *Self, allocator: *Allocator, message_ct: usize, inner: T) !void {
+        pub fn init(
+            self: *Self,
+            allocator: *Allocator,
+            message_ct: usize,
+            inner: *T,
+        ) Allocator.Error!void {
             self.inner = inner;
-            self.inner_module = Module.init(&self.inner);
-            self.channel = try EvChannel.init(allocator, message_ct);
+            self.channel = try MsgChannel.init(allocator, message_ct);
             self.rx = self.channel.makeReceiver();
         }
 
-        //;
-
         pub fn deinit(self: *Self) void {
             self.channel.deinit();
-            self.inner_module.deinit();
-        }
-
-        pub fn frame(
-            self: *Self,
-            ctx: CallbackContext,
-        ) void {
-            while (self.rx.tryRecv(ctx.now)) |msg| {
-                self.inner.takeMessage(ctx, msg.data);
-            }
-            self.inner_module.frame(ctx);
-        }
-
-        pub fn compute(
-            self: *Self,
-            ctx: CallbackContext,
-            inputs: []const InBuffer,
-            output: []f32,
-        ) void {
-            self.inner_module.compute(ctx, inputs, output);
         }
 
         pub fn makeController(self: *Self) Controller {
             return Controller{
                 .tx = self.channel.makeSender(),
             };
+        }
+
+        //;
+
+        pub fn module(self: *Self) Module {
+            return .{
+                .impl = interface.Impl.init(self),
+                .vtable = &comptime Module.VTable{
+                    .frame = frame,
+                    .compute = compute,
+                },
+            };
+        }
+
+        pub fn frame(m: Module, ctx: Module.FrameContext) void {
+            var self = m.impl.cast(Self);
+            while (self.rx.tryRecv(ctx.now)) |event| {
+                self.inner.takeMessage(event.data);
+            }
+            if (@hasDecl(T, "frame")) {
+                self.inner.frame(ctx);
+            }
+        }
+
+        pub fn compute(m: Module, ctx: Module.ComputeContext) void {
+            var self = m.impl.cast(Self);
+            if (@hasDecl(T, "compute")) {
+                self.inner.compute(ctx);
+            }
         }
     };
 }
